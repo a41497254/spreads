@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SPACEX implied val · VNTL vs PreStocks</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  body{font-family:ui-monospace,Menlo,Consolas,monospace;background:#0e1117;color:#e6edf3;margin:0;padding:24px;max-width:1100px;margin-inline:auto}
+  h1{font-size:18px;font-weight:600;margin:0 0 4px}
+  .sub{color:#7d8590;font-size:12px;margin-bottom:24px}
+  table{border-collapse:collapse;margin-bottom:24px;font-size:13px}
+  th,td{padding:6px 14px;text-align:right;border-bottom:1px solid #21262d}
+  th:first-child,td:first-child{text-align:left}
+  th{color:#7d8590;font-weight:500}
+  .chart{background:#161b22;border:1px solid #21262d;border-radius:6px;padding:8px;margin-bottom:16px}
+  .pos{color:#3fb950}.neg{color:#f85149}
+</style>
+</head>
+<body>
+<h1>SPACEX implied valuation · VNTL vs PreStocks</h1>
+<div class="sub" id="sub">loading…</div>
+<table id="snap"></table>
+<div class="chart" id="chartVal"></div>
+<div class="chart" id="chartSpread"></div>
+<script>
+const fmt = v => v>=1e12 ? `$${(v/1e12).toFixed(3)}T` : v>=1e9 ? `$${(v/1e9).toFixed(3)}B` : `$${(v/1e6).toFixed(2)}M`;
+const layout = {paper_bgcolor:'#161b22',plot_bgcolor:'#161b22',font:{color:'#e6edf3',family:'ui-monospace'},margin:{t:30,r:20,b:40,l:60},legend:{orientation:'h',y:1.15}};
+
+fetch('data.json?t=' + Date.now()).then(r => r.json()).then(d => {
+  if (!d.length) { document.getElementById('sub').textContent = 'no data yet'; return; }
+  const last = d[d.length-1];
+  const ts = d.map(r => new Date(r.ts*1000));
+  document.getElementById('sub').textContent = `${d.length} samples · last ${ts[ts.length-1].toISOString()} · threshold |spread|≥10%`;
+
+  const cls = last.spread >= 0 ? 'pos' : 'neg';
+  document.getElementById('snap').innerHTML = `
+    <tr><th>Source</th><th>Price</th><th>Implied Val</th></tr>
+    <tr><td>VNTL mark</td><td>${last.vmark} B</td><td>${fmt(last.vval)}</td></tr>
+    <tr><td>VNTL oracle</td><td>${last.vorac} B</td><td>—</td></tr>
+    <tr><td>PreStocks token</td><td>$${last.pp.toFixed(2)}/tok</td><td>${fmt(last.pval)}</td></tr>
+    <tr><td>Baseline</td><td>$${last.bp.toFixed(3)}/tok</td><td>$${last.bv}B</td></tr>
+    <tr><td><b>Spread</b></td><td colspan=2 class="${cls}"><b>${last.spread>=0?'+':''}${last.spread.toFixed(3)}%</b></td></tr>`;
+
+  Plotly.newPlot('chartVal', [
+    {x:ts, y:d.map(r=>r.vval/1e9), name:'VNTL', mode:'lines', line:{color:'#58a6ff'}},
+    {x:ts, y:d.map(r=>r.pval/1e9), name:'PreStocks', mode:'lines', line:{color:'#d29922'}},
+  ], {...layout, title:'Implied Valuation ($B)', yaxis:{title:'$B'}}, {displayModeBar:false});
+
+  Plotly.newPlot('chartSpread', [
+    {x:ts, y:d.map(r=>r.spread), name:'spread%', mode:'lines', line:{color:'#a371f7'}, fill:'tozeroy'},
+  ], {...layout, title:'Spread % (VNTL − PreStocks)', yaxis:{title:'%',zeroline:true,zerolinecolor:'#30363d'},
+      shapes:[
+        {type:'line',xref:'paper',x0:0,x1:1,y0:10,y1:10,line:{color:'#f85149',dash:'dash',width:1}},
+        {type:'line',xref:'paper',x0:0,x1:1,y0:-10,y1:-10,line:{color:'#f85149',dash:'dash',width:1}},
+      ]}, {displayModeBar:false});
+}).catch(e => { document.getElementById('sub').textContent = 'error: ' + e.message; });
+</script>
+</body>
+</html>
