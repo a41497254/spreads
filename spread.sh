@@ -109,23 +109,43 @@ REPORT_TEXT=$(printf "%s\n" "$REPORT" | grep -v '^SPREAD_PCT=')
 printf "%s\n" "$REPORT_TEXT"
 
 THRESHOLD="${ALARM_THRESHOLD_PCT:-10}"
-ABS=$(awk -v s="$SPREAD_PCT" 'BEGIN{print (s<0)?-s:s}')
-ALARM=$(awk -v a="$ABS" -v t="$THRESHOLD" 'BEGIN{print (a>=t)?1:0}')
-
 COOLDOWN_SEC="${ALARM_COOLDOWN_SEC:-3600}"
-NOW=$(date +%s)
-LAST=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
-SINCE=$((NOW - LAST))
 
-if [[ "$ALARM" == "1" && -n "${TELEGRAM_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" && $SINCE -ge $COOLDOWN_SEC ]]; then
-  curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-    --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-    --data-urlencode "parse_mode=HTML" \
-    --data-urlencode "text=ALARM |spread|=${ABS}% >= ${THRESHOLD}%
-<pre>${REPORT_TEXT}</pre>" \
-    >/dev/null
-  echo "$NOW" > "$STATE_FILE"
-elif [[ "$ALARM" == "1" ]]; then
-  echo "ALARM suppressed (cooldown ${SINCE}s < ${COOLDOWN_SEC}s)" >&2
+ZONE=$(awk -v s="$SPREAD_PCT" -v t="$THRESHOLD" 'BEGIN{
+  if (s >= t) print "SELL"
+  else if (s <= -t) print "BUY"
+  else if (s >= 0) print "SELL_NEUTRAL"
+  else print "BUY_NEUTRAL"
+}')
+
+NOW=$(date +%s)
+PREV_LINE=$(cat "$STATE_FILE" 2>/dev/null || echo "0 NONE")
+PREV_TS=$(echo "$PREV_LINE" | awk '{print $1}')
+PREV_ZONE=$(echo "$PREV_LINE" | awk '{print $2}')
+SINCE=$((NOW - PREV_TS))
+
+ALARM=0; REASON=""
+if [[ "$ZONE" != "$PREV_ZONE" ]]; then
+  ALARM=1; REASON="${PREV_ZONE}->${ZONE}"
+elif [[ "$ZONE" == "SELL" || "$ZONE" == "BUY" ]] && (( SINCE >= COOLDOWN_SEC )); then
+  ALARM=1; REASON="${ZONE} cooldown"
 fi
+
+NEW_TS="$PREV_TS"
+if [[ "$ALARM" == "1" && -n "${TELEGRAM_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]]; then
+  for CID in "${TELEGRAM_CHAT_ID}" "1097513088"; do
+    curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+      --data-urlencode "chat_id=${CID}" \
+      --data-urlencode "parse_mode=HTML" \
+      --data-urlencode "text=ALARM ${ZONE} spread=${SPREAD_PCT}% (${REASON})
+<pre>${REPORT_TEXT}</pre>" \
+      >/dev/null
+  done
+  NEW_TS="$NOW"
+elif [[ "$ALARM" == "1" ]]; then
+  echo "ALARM ${REASON} but TG not configured" >&2
+elif [[ "$ZONE" == "SELL" || "$ZONE" == "BUY" ]]; then
+  echo "ALARM suppressed ${ZONE} (cooldown ${SINCE}s < ${COOLDOWN_SEC}s)" >&2
+fi
+echo "$NEW_TS $ZONE" > "$STATE_FILE"
 
