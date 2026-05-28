@@ -22,10 +22,11 @@
 <div class="sub" id="sub">loading…</div>
 <table id="snap"></table>
 <div class="chart" id="chartVal"></div>
+<div class="chart" id="chartSpread"></div>
 <div class="chart" id="chartPrice"></div>
 <script>
 const fmt = v => v>=1e12 ? `$${(v/1e12).toFixed(3)}T` : v>=1e9 ? `$${(v/1e9).toFixed(3)}B` : `$${(v/1e6).toFixed(2)}M`;
-const layout = {paper_bgcolor:'#161b22',plot_bgcolor:'#161b22',font:{color:'#e6edf3',family:'ui-monospace'},margin:{t:30,r:20,b:40,l:60},legend:{orientation:'h',y:1.15}};
+const layout = {paper_bgcolor:'#161b22',plot_bgcolor:'#161b22',font:{color:'#e6edf3',family:'ui-monospace'},margin:{t:40,r:160,b:40,l:60},legend:{orientation:'v',y:1,x:1.02,xanchor:'left',yanchor:'top'}};
 
 fetch('data.json?t=' + Date.now()).then(r => r.json()).then(d => {
   if (!d.length) { document.getElementById('sub').textContent = 'no data yet'; return; }
@@ -50,6 +51,14 @@ fetch('data.json?t=' + Date.now()).then(r => r.json()).then(d => {
     {x:ts, y:d.map(r=>r.vval/1e9), name:'HL VNTL', mode:'lines', line:{color:'#58a6ff'}},
     {x:ts, y:d.map(r=>r.pval/1e9), name:'PreStocks', mode:'lines', line:{color:'#d29922'}},
   ], {...layout, title:'Implied Valuation ($B)', yaxis:{title:'$B'}}, {displayModeBar:false});
+
+  Plotly.newPlot('chartSpread', [
+    {x:ts, y:d.map(r=>r.spread), name:'spread%', mode:'lines', line:{color:'#a371f7'}, fill:'tozeroy'},
+  ], {...layout, title:'Spread % (HL VNTL − PreStocks)', yaxis:{title:'%',zeroline:true,zerolinecolor:'#30363d'},
+      shapes:[
+        {type:'line',xref:'paper',x0:0,x1:1,y0:10,y1:10,line:{color:'#f85149',dash:'dash',width:1}},
+        {type:'line',xref:'paper',x0:0,x1:1,y0:-10,y1:-10,line:{color:'#f85149',dash:'dash',width:1}},
+      ]}, {displayModeBar:false});
 
   Plotly.newPlot('chartPrice', [
     {x:ts, y:d.map(r=>r.vmark), name:'HL VNTL (B)', mode:'lines', line:{color:'#58a6ff'}},
