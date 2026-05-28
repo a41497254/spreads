@@ -88,10 +88,10 @@ def fmt(v):
     if v >= 1e9:  return f"${v/1e9:.3f}B"
     return f"${v/1e6:.2f}M"
 
-now = datetime.datetime.now(datetime.UTC).strftime("%FT%TZ")
-print(f"\nSPACEX implied valuation (UTC {now})\n")
+now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%FT%T")
+print(f"\nSPACEX implied valuation (GMT+8 {now})\n")
 print(f"{'Source':<22} {'Price':<22} Implied Val")
-print(f"{'-'*22} {'-'*22} {'-'*11}")
+print(f"{'-'*22} {'-'*14} {'-'*11}")
 print(f"{'VNTL mark (HL perp)':<22} {f'{vmark} B':<22} {fmt(vval)}")
 print(f"{'VNTL oracle':<22} {f'{vorac} B':<22} -")
 print(f"{'PreStocks token':<22} {f'${pp:.2f}/tok':<22} {fmt(pval)}")
