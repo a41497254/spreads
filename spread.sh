@@ -6,15 +6,23 @@ ENV_FILE="${SPACEX_SPREAD_ENV:-$HOME/.config/spacex-spread.env}"
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 DATA_JSON="${SCRIPT_DIR}/docs/data.json"
+STATE_FILE="${HOME}/.cache/spacex-spread.alarm"
+mkdir -p "$(dirname "$STATE_FILE")"
 
 HL=$(mktemp); PSJ=$(mktemp); PSH=$(mktemp); CHUNK=$(mktemp)
-trap 'rm -f "$HL" "$PSJ" "$PSH" "$CHUNK"' EXIT
+BVNTL=$(mktemp); BPRE=$(mktemp); OKX=$(mktemp)
+trap 'rm -f "$HL" "$PSJ" "$PSH" "$CHUNK" "$BVNTL" "$BPRE" "$OKX"' EXIT
 
 curl -sSf -X POST https://api.hyperliquid.xyz/info \
   -H 'Content-Type: application/json' \
   -d '{"type":"metaAndAssetCtxs","dex":"vntl"}' -o "$HL" &
 curl -sSf https://prestocks.com/api/metrics -H 'Accept: application/json' -o "$PSJ" &
 curl -sSf -A 'Mozilla/5.0' -L https://prestocks.com/spacex -o "$PSH" &
+curl -sS --max-time 8 -G "https://open-api.bingx.com/openApi/swap/v1/ticker/price" \
+  --data-urlencode "symbol=NCSKSPACEXV2USD-USDT" -o "$BVNTL" &
+curl -sS --max-time 8 -G "https://open-api.bingx.com/openApi/swap/v1/ticker/price" \
+  --data-urlencode "symbol=NCSKSPACEXP2USD-USDT" -o "$BPRE" &
+curl -sS --max-time 8 "https://www.okx.com/api/v5/market/ticker?instId=SPACEX-USDT-SWAP" -o "$OKX" &
 wait
 
 # PreStocks baseline is hardcoded in a JS chunk (id 170, hashed). Find it from HTML.
@@ -24,9 +32,27 @@ if [[ -z "$CHUNK_PATH" ]]; then
 fi
 curl -sSf "https://prestocks.com${CHUNK_PATH}" -o "$CHUNK"
 
-REPORT=$(python3 - "$HL" "$PSJ" "$CHUNK" "$DATA_JSON" <<'PY'
+REPORT=$(python3 - "$HL" "$PSJ" "$CHUNK" "$DATA_JSON" "$BVNTL" "$BPRE" "$OKX" <<'PY'
 import json, re, sys, datetime, os
-hl_f, ps_j, chunk_f, data_f = sys.argv[1:]
+hl_f, ps_j, chunk_f, data_f, bvntl_f, bpre_f, okx_f = sys.argv[1:]
+
+def safe_load(p):
+    try: return json.load(open(p))
+    except (json.JSONDecodeError, OSError): return None
+
+def bingx_price(d):
+    if d and d.get("code") == 0 and d.get("data", {}).get("price"):
+        return float(d["data"]["price"])
+    return None
+
+def okx_price(d):
+    if d and d.get("code") == "0" and d.get("data"):
+        return float(d["data"][0]["last"])
+    return None
+
+bvntl = bingx_price(safe_load(bvntl_f))
+bpre  = bingx_price(safe_load(bpre_f))
+okx   = okx_price(safe_load(okx_f))
 
 meta, ctxs = json.load(open(hl_f))
 idx = next(i for i, u in enumerate(meta["universe"]) if u["name"] == "vntl:SPACEX")
@@ -53,7 +79,8 @@ if os.path.exists(data_f):
     try: hist = json.load(open(data_f))
     except json.JSONDecodeError: hist = []
 hist.append({"ts": ts, "vmark": vmark, "vorac": vorac, "pp": pp, "bp": bp, "bv": bv,
-             "vval": round(vval), "pval": round(pval), "spread": round(spread, 4)})
+             "vval": round(vval), "pval": round(pval), "spread": round(spread, 4),
+             "bvntl": bvntl, "bpre": bpre, "okx": okx})
 with open(data_f, "w") as f: json.dump(hist, f, separators=(",", ":"))
 
 def fmt(v):
@@ -68,6 +95,9 @@ print(f"{'-'*22} {'-'*22} {'-'*11}")
 print(f"{'VNTL mark (HL perp)':<22} {f'{vmark} B':<22} {fmt(vval)}")
 print(f"{'VNTL oracle':<22} {f'{vorac} B':<22} -")
 print(f"{'PreStocks token':<22} {f'${pp:.2f}/tok':<22} {fmt(pval)}")
+print(f"{'BingX VNTL perp':<22} {f'{bvntl} USDT' if bvntl else 'n/a':<22} -")
+print(f"{'BingX PreStocks perp':<22} {f'{bpre} USDT' if bpre else 'PAUSED':<22} -")
+print(f"{'OKX SPACEX-USDT-SWAP':<22} {f'{okx} USDT' if okx else 'n/a':<22} -")
 print(f"\nBaseline : ${bp:.3f}/tok = ${bv:g}B  (implied {bv/bp*pp:.2f}B from current price)")
 print(f"Spread   : {spread:+.3f}%  (VNTL vs PreStocks)")
 print(f"SPREAD_PCT={spread:.4f}")
@@ -82,12 +112,20 @@ THRESHOLD="${ALARM_THRESHOLD_PCT:-10}"
 ABS=$(awk -v s="$SPREAD_PCT" 'BEGIN{print (s<0)?-s:s}')
 ALARM=$(awk -v a="$ABS" -v t="$THRESHOLD" 'BEGIN{print (a>=t)?1:0}')
 
-if [[ "$ALARM" == "1" && -n "${TELEGRAM_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]]; then
+COOLDOWN_SEC="${ALARM_COOLDOWN_SEC:-3600}"
+NOW=$(date +%s)
+LAST=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
+SINCE=$((NOW - LAST))
+
+if [[ "$ALARM" == "1" && -n "${TELEGRAM_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" && $SINCE -ge $COOLDOWN_SEC ]]; then
   curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
     --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
     --data-urlencode "parse_mode=HTML" \
     --data-urlencode "text=ALARM |spread|=${ABS}% >= ${THRESHOLD}%
 <pre>${REPORT_TEXT}</pre>" \
     >/dev/null
+  echo "$NOW" > "$STATE_FILE"
+elif [[ "$ALARM" == "1" ]]; then
+  echo "ALARM suppressed (cooldown ${SINCE}s < ${COOLDOWN_SEC}s)" >&2
 fi
 

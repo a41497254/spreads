@@ -22,7 +22,7 @@
 <div class="sub" id="sub">loading…</div>
 <table id="snap"></table>
 <div class="chart" id="chartVal"></div>
-<div class="chart" id="chartSpread"></div>
+<div class="chart" id="chartPrice"></div>
 <script>
 const fmt = v => v>=1e12 ? `$${(v/1e12).toFixed(3)}T` : v>=1e9 ? `$${(v/1e9).toFixed(3)}B` : `$${(v/1e6).toFixed(2)}M`;
 const layout = {paper_bgcolor:'#161b22',plot_bgcolor:'#161b22',font:{color:'#e6edf3',family:'ui-monospace'},margin:{t:30,r:20,b:40,l:60},legend:{orientation:'h',y:1.15}};
@@ -34,26 +34,30 @@ fetch('data.json?t=' + Date.now()).then(r => r.json()).then(d => {
   document.getElementById('sub').textContent = `${d.length} samples · last ${ts[ts.length-1].toISOString()} · threshold |spread|≥10%`;
 
   const cls = last.spread >= 0 ? 'pos' : 'neg';
+  const cell = v => v==null ? '—' : v;
   document.getElementById('snap').innerHTML = `
-    <tr><th>Source</th><th>Price</th><th>Implied Val</th></tr>
-    <tr><td>VNTL mark</td><td>${last.vmark} B</td><td>${fmt(last.vval)}</td></tr>
-    <tr><td>VNTL oracle</td><td>${last.vorac} B</td><td>—</td></tr>
-    <tr><td>PreStocks token</td><td>$${last.pp.toFixed(2)}/tok</td><td>${fmt(last.pval)}</td></tr>
+    <tr><th>Source</th><th>Price</th><th>Implied Val ($B)</th></tr>
+    <tr><td>HL VNTL mark</td><td>${last.vmark} B</td><td>${(last.vval/1e9).toFixed(2)}</td></tr>
+    <tr><td>HL VNTL oracle</td><td>${last.vorac} B</td><td>—</td></tr>
+    <tr><td>PreStocks token</td><td>$${last.pp.toFixed(2)}/tok</td><td>${(last.pval/1e9).toFixed(2)}</td></tr>
+    <tr><td>BingX VNTL perp</td><td>${cell(last.bvntl)} USDT</td><td>—</td></tr>
+    <tr><td>BingX PreStocks perp</td><td>${last.bpre==null?'<i>paused</i>':last.bpre+' USDT'}</td><td>—</td></tr>
+    <tr><td>OKX SPACEX-USDT-SWAP</td><td>${cell(last.okx)} USDT</td><td>—</td></tr>
     <tr><td>Baseline</td><td>$${last.bp.toFixed(3)}/tok</td><td>$${last.bv}B</td></tr>
-    <tr><td><b>Spread</b></td><td colspan=2 class="${cls}"><b>${last.spread>=0?'+':''}${last.spread.toFixed(3)}%</b></td></tr>`;
+    <tr><td><b>Spread (HL vs PS)</b></td><td colspan=2 class="${cls}"><b>${last.spread>=0?'+':''}${last.spread.toFixed(3)}%</b></td></tr>`;
 
   Plotly.newPlot('chartVal', [
-    {x:ts, y:d.map(r=>r.vval/1e9), name:'VNTL', mode:'lines', line:{color:'#58a6ff'}},
+    {x:ts, y:d.map(r=>r.vval/1e9), name:'HL VNTL', mode:'lines', line:{color:'#58a6ff'}},
     {x:ts, y:d.map(r=>r.pval/1e9), name:'PreStocks', mode:'lines', line:{color:'#d29922'}},
   ], {...layout, title:'Implied Valuation ($B)', yaxis:{title:'$B'}}, {displayModeBar:false});
 
-  Plotly.newPlot('chartSpread', [
-    {x:ts, y:d.map(r=>r.spread), name:'spread%', mode:'lines', line:{color:'#a371f7'}, fill:'tozeroy'},
-  ], {...layout, title:'Spread % (VNTL − PreStocks)', yaxis:{title:'%',zeroline:true,zerolinecolor:'#30363d'},
-      shapes:[
-        {type:'line',xref:'paper',x0:0,x1:1,y0:10,y1:10,line:{color:'#f85149',dash:'dash',width:1}},
-        {type:'line',xref:'paper',x0:0,x1:1,y0:-10,y1:-10,line:{color:'#f85149',dash:'dash',width:1}},
-      ]}, {displayModeBar:false});
+  Plotly.newPlot('chartPrice', [
+    {x:ts, y:d.map(r=>r.vmark), name:'HL VNTL (B)', mode:'lines', line:{color:'#58a6ff'}},
+    {x:ts, y:d.map(r=>r.pval/1e9), name:'PreStocks (→B)', mode:'lines', line:{color:'#d29922'}},
+    {x:ts, y:d.map(r=>r.bvntl ?? null), name:'BingX VNTL (USDT)', mode:'lines', line:{color:'#3fb950'}, connectgaps:false},
+    {x:ts, y:d.map(r=>r.bpre ?? null), name:'BingX PreStocks (USDT)', mode:'lines', line:{color:'#a371f7'}, connectgaps:false},
+    {x:ts, y:d.map(r=>r.okx ?? null), name:'OKX SWAP (USDT)', mode:'lines', line:{color:'#f85149'}, connectgaps:false},
+  ], {...layout, title:'Cross-Exchange Price (~$B / USDT, click legend to toggle)', yaxis:{title:'value'}}, {displayModeBar:false});
 }).catch(e => { document.getElementById('sub').textContent = 'error: ' + e.message; });
 </script>
 </body>
